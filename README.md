@@ -14,10 +14,20 @@
 
 ## Environment Set Up
 To set up the current environment, please clone the repository
+
+HTTPS URL
 ```bash
 cd <Project Folder>
 git clone https://github.com/TomWoah123/18786-Final-Project.git
 ```
+or 
+
+SSH URL
+```bash
+cd <Project Folder>
+git clone git@github.com:TomWoah123/18786-Final-Project.git
+```
+
 After you have cloned the repository, you will need to download two specific files:
 - `ffhq-dataset-v2.json`: This JSON file holds information regarding each of the 70,000 images in the dataset,
 specifically where to download the image. The JSON file can be found in this 
