@@ -31,21 +31,71 @@ def conv(in_channels, out_channels, kernel_size, stride=2, padding=1,
     return nn.Sequential(*layers)
 
 
-class ConditionalBatchNorm(nn.Module):
-    def __init__(self, num_features, num_conditions):
+# Pulled from https://github.com/t-vi/pytorch-tvmisc/tree/master to implement
+# Conditional Batch Normalization
+class ConditionalBatchNorm(torch.nn.Module):
+    # as in the chainer SN-GAN implementation, we keep per-cat weight and bias
+    def __init__(self, num_features, num_cats, eps=2e-5, momentum=0.1, affine=True,
+                 track_running_stats=True):
         super().__init__()
         self.num_features = num_features
-        self.bn = nn.BatchNorm1d(num_features, affine=False)
-        self.embed = nn.Embedding(num_conditions, num_features * 2)
-        self.embed.weight.data[:, :num_features].normal_(1, 0.02)  # Initialise scale at 1
-        self.embed.weight.data[:, num_features:].zero_()  # Initialise shift at 0
+        self.num_cats = num_cats
+        self.eps = eps
+        self.momentum = momentum
+        self.affine = affine
+        self.track_running_stats = track_running_stats
+        if self.affine:
+            self.weight = torch.nn.Parameter(torch.Tensor(num_cats, num_features))
+            self.bias = torch.nn.Parameter(torch.Tensor(num_cats, num_features))
+        else:
+            self.register_parameter('weight', None)
+            self.register_parameter('bias', None)
+        if self.track_running_stats:
+            self.register_buffer('running_mean', torch.zeros(num_features))
+            self.register_buffer('running_var', torch.ones(num_features))
+            self.register_buffer('num_batches_tracked', torch.tensor(0, dtype=torch.long))
+        else:
+            self.register_parameter('running_mean', None)
+            self.register_parameter('running_var', None)
+            self.register_parameter('num_batches_tracked', None)
+        self.reset_parameters()
 
-    def forward(self, x, y):
-        out = self.bn(x)
-        embed = self.embed(y)
-        gamma, beta = embed.chunk(2, 1)
-        out = gamma * out + beta
+    def reset_running_stats(self):
+        if self.track_running_stats:
+            self.running_mean.zero_()
+            self.running_var.fill_(1)
+            self.num_batches_tracked.zero_()
+
+    def reset_parameters(self):
+        self.reset_running_stats()
+        if self.affine:
+            self.weight.data.fill_(1.0)
+            self.bias.data.zero_()
+
+    def forward(self, input, cats):
+        exponential_average_factor = 0.0
+
+        if self.training and self.track_running_stats:
+            self.num_batches_tracked += 1
+            if self.momentum is None:  # use cumulative moving average
+                exponential_average_factor = 1.0 / self.num_batches_tracked.item()
+            else:  # use exponential moving average
+                exponential_average_factor = self.momentum
+
+        out = torch.nn.functional.batch_norm(
+            input, self.running_mean, self.running_var, None, None,
+            self.training or not self.track_running_stats,
+            exponential_average_factor, self.eps)
+        if self.affine:
+            shape = [input.size(0), self.num_features] + (input.dim() - 2) * [1]
+            weight = self.weight.index_select(0, cats).view(shape)
+            bias = self.bias.index_select(0, cats).view(shape)
+            out = out * weight + bias
         return out
+
+    def extra_repr(self):
+        return '{num_features}, num_cats={num_cats}, eps={eps}, momentum={momentum}, affine={affine}, ' \
+               'track_running_stats={track_running_stats}'.format(**self.__dict__)
 
 
 class Generator(nn.Module):
@@ -54,85 +104,100 @@ class Generator(nn.Module):
             super().__init__()
             self.conv1 = nn.Conv2d(in_channels=3, out_channels=(conv_dim // 2),
                                    kernel_size=4, stride=2, padding=1, bias=False)
-            self.cond_batch_norm1 = ConditionalBatchNorm(conv_dim // 2, 2)
+            self.norm1 = nn.InstanceNorm2d(conv_dim // 2)
             self.activation1 = nn.ReLU()
             self.conv2 = nn.Conv2d(in_channels=(conv_dim // 2), out_channels=conv_dim,
                                    kernel_size=4, stride=2, padding=1, bias=False)
-            self.cond_batch_norm2 = ConditionalBatchNorm(conv_dim, 2)
+            self.norm2 = nn.InstanceNorm2d(conv_dim)
             self.activation2 = nn.ReLU()
             self.conv3 = nn.Conv2d(in_channels=conv_dim, out_channels=conv_dim * 2,
                                    kernel_size=4, stride=2, padding=1, bias=False)
-            self.cond_batch_norm3 = ConditionalBatchNorm(conv_dim * 2, 2)
+            self.norm3 = nn.InstanceNorm2d(conv_dim * 2)
             self.activation3 = nn.ReLU()
             self.conv4 = nn.Conv2d(in_channels=conv_dim * 2, out_channels=conv_dim * 4,
                                    kernel_size=4, stride=2, padding=1, bias=False)
-            self.cond_batch_norm4 = ConditionalBatchNorm(conv_dim * 4, 2)
+            self.norm4 = nn.InstanceNorm2d(conv_dim * 4)
             self.activation4 = nn.ReLU()
 
-        def forward(self, x, target_age):
+        def forward(self, x):
             x = self.conv1(x)
-            x = self.cond_batch_norm1(x, target_age)
+            x = self.norm1(x)
             x = self.activation1(x)
             x = self.conv2(x)
-            x = self.cond_batch_norm2(x, target_age)
+            x = self.norm2(x)
             x = self.activation2(x)
             x = self.conv3(x)
-            x = self.cond_batch_norm3(x, target_age)
+            x = self.norm3(x)
             x = self.activation3(x)
             x = self.conv4(x)
-            x = self.cond_batch_norm4(x, target_age)
+            x = self.norm4(x)
             x = self.activation4(x)
             return x
 
     class AgeModulator(nn.Module):
 
         def __init__(self, conv_dim=64):
-            pass
+            super().__init__()
+            self.conv1 = nn.Conv2d(in_channels=conv_dim * 4 + 1, out_channels=conv_dim * 4, kernel_size=3, padding=1)
+            self.cond_batch_norm1 = ConditionalBatchNorm(conv_dim * 4, 2)
+            self.activation1 = nn.LeakyReLU()
+            self.fc1 = nn.Linear(2, 256)
 
         def forward(self, x, target_age):
-            pass
+            age_embedding_vector = self.fc1(target_age)
+            age_embedding_vector = age_embedding_vector.resize(len(target_age), 16, 16).unsqueeze(1)
+            modulated_features = torch.cat([x, age_embedding_vector], dim=1)
+            output = self.conv1(modulated_features)
+            _, ages = torch.where(target_age == 1)
+            output = self.cond_batch_norm1(output, ages)
+            output = self.activation1(output)
+            return output
 
     class Decoder(nn.Module):
         def __init__(self, conv_dim=64):
             super().__init__()
             self.up_conv1 = nn.ConvTranspose2d(in_channels=conv_dim * 4, out_channels=conv_dim * 2,
-                                            kernel_size=4, stride=2, padding=1, bias=False)
-            self.cond_batch_norm1 = ConditionalBatchNorm(conv_dim * 2, 2)
+                                               kernel_size=4, stride=2, padding=1, bias=False)
+            self.norm1 = nn.InstanceNorm2d(conv_dim * 2)
             self.activation1 = nn.ReLU()
             self.up_conv2 = nn.ConvTranspose2d(in_channels=conv_dim * 2, out_channels=conv_dim,
-                                            kernel_size=4, stride=2, padding=1, bias=False)
-            self.cond_batch_norm2 = ConditionalBatchNorm(conv_dim, 2)
+                                               kernel_size=4, stride=2, padding=1, bias=False)
+            self.norm2 = nn.InstanceNorm2d(conv_dim)
             self.activation2 = nn.ReLU()
             self.up_conv3 = nn.ConvTranspose2d(in_channels=conv_dim, out_channels=conv_dim // 2,
-                                            kernel_size=4, stride=2, padding=1, bias=False)
-            self.cond_batch_norm3 = ConditionalBatchNorm(conv_dim // 2, 2)
+                                               kernel_size=4, stride=2, padding=1, bias=False)
+            self.norm3 = nn.InstanceNorm2d(conv_dim // 2)
             self.activation3 = nn.ReLU()
             self.up_conv4 = nn.ConvTranspose2d(in_channels=conv_dim // 2, out_channels=3,
-                                            kernel_size=4, stride=2, padding=1, bias=False)
-            self.cond_batch_norm4 = ConditionalBatchNorm(3, 2)
-            self.activation4 = nn.ReLU()
+                                               kernel_size=4, stride=2, padding=1, bias=False)
+            self.norm4 = nn.InstanceNorm2d(3)
+            self.activation4 = nn.Tanh()
 
-        def forward(self, x, target_age):
+        def forward(self, x):
             x = self.up_conv1(x)
-            x = self.cond_batch_norm1(x, target_age)
+            x = self.norm1(x)
             x = self.activation1(x)
             x = self.up_conv2(x)
-            x = self.cond_batch_norm2(x, target_age)
+            x = self.norm2(x)
             x = self.activation2(x)
             x = self.up_conv3(x)
-            x = self.cond_batch_norm3(x, target_age)
+            x = self.norm3(x)
             x = self.activation3(x)
             x = self.up_conv4(x)
-            x = self.cond_batch_norm4(x, target_age)
+            x = self.norm4(x)
             x = self.activation4(x)
             return x
 
     def __init__(self, conv_dim=64):
         super().__init__()
         self.encoder = self.Encoder(conv_dim=conv_dim)
+        self.decoder = self.Decoder(conv_dim=conv_dim)
+        self.age_modulator = self.AgeModulator(conv_dim=conv_dim)
 
     def forward(self, x, target_age):
-        identity_features = self.encoder(x, target_age)
+        identity_features = self.encoder(x)
+        age_features = self.age_modulator(identity_features, target_age)
+        return self.decoder(identity_features + age_features)
 
 
 class Discriminator(nn.Module):

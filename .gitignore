@@ -1,6 +1,4 @@
 ffhq-dataset-v2.json
 ffhq_aging_labels.csv
-data/20-29_male
-data/20-29_female
-data/50-69_male
-data/50-69_female
+data/
+__pycache__

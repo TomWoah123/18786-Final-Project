@@ -1,6 +1,10 @@
 import argparse
-from models import Discriminator
+from models import Discriminator, Generator
 import torch
+from torchvision import transforms
+import facenet_pytorch
+from PIL import Image
+import data_loader
 
 
 def create_parser():
@@ -36,7 +40,12 @@ def create_parser():
     return parser
 
 
+train_loader, test_loader = data_loader.get_data_loaders()
 discriminator = Discriminator()
-image = torch.randn(size=(2, 3, 256, 256))
-result = discriminator(image)
-print(result)
+generator = Generator()
+for images, ages in train_loader:
+    discriminator_results = discriminator(images)
+    generator_results = generator(images, ages)
+    print(discriminator_results)
+    print(generator_results.shape)
+    break
