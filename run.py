@@ -43,9 +43,43 @@ def create_parser():
 train_loader, test_loader = data_loader.get_data_loaders()
 discriminator = Discriminator()
 generator = Generator()
-for images, ages in train_loader:
-    discriminator_results = discriminator(images)
-    generator_results = generator(images, ages)
-    print(discriminator_results)
-    print(generator_results.shape)
+num_epochs = 30
+gen_optimizer = torch.optim.Adam(generator.parameters(), lr=0.001)
+dis_optimizer = torch.optim.Adam(discriminator.parameters(), lr=0.001)
+adversarial_loss = torch.nn.BCELoss()
+recycle_loss = torch.nn.L1Loss()
+cycle_loss = torch.nn.L1Loss()
+for epoch in range(num_epochs):
+    for images, ages in train_loader:
+        print(f"Epoch: {epoch}")
+        dis_optimizer.zero_grad()
+        real_labels = torch.full(size=(len(images),), fill_value=1, dtype=float)
+        p_real = discriminator(images).double()
+        d_real_loss = adversarial_loss(input=p_real, target=real_labels)
+        new_target_ages = 1 - ages
+        fake_labels = torch.full(size=(len(images),), fill_value=0, dtype=float)
+        generated_images = generator(images, new_target_ages)
+        p_fake = discriminator(generated_images).double()
+        d_fake_loss = adversarial_loss(input=p_fake, target=fake_labels)
+        discriminator_loss = d_real_loss + d_fake_loss
+        discriminator_loss.backward()
+        dis_optimizer.step()
+        print(f"Optimized Discriminator. Loss: {discriminator_loss.item()}")
+
+        gen_optimizer.zero_grad()
+        fake_labels = torch.full(size=(len(images),), fill_value=1, dtype=float)
+        generated_images = generator(images, new_target_ages)
+        p_real = discriminator(generated_images).double()
+        g_real_loss = adversarial_loss(input=p_real, target=fake_labels)
+        reconstruction_loss = recycle_loss(images, generated_images)
+        recycle_images = generator(generated_images, ages)
+        gen_cycle_loss = cycle_loss(images, recycle_images)
+        generator_loss = g_real_loss + reconstruction_loss + gen_cycle_loss
+        generator_loss.backward()
+        gen_optimizer.step()
+        print(f"Optimized Generator. Loss: {generator_loss.item()}")
+        break
     break
+
+
+
