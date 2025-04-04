@@ -1,5 +1,77 @@
 import torch
 from torch import nn
+import antialiased_cnns
+
+def disney_uplayer(in_channels, out_channels, stride=1, 
+                    init_zero_weights=False, activ="leaky"):
+    
+    # Using this terminology because that's how it was in the disney paper... want to be consistent
+    C = in_channels
+    two_divided_by_C = out_channels // 2
+
+
+    layers = []
+    # MaxBlurPool as described in the following github: https://github.com/adobe/antialiased-cnns/blob/master/README.md
+    # CHECK THIS BLURUPSAMPLE IMPLEMENTATION
+    blurupsample_layer_1 = [nn.Upsample(scale_factor=2), antialiased_cnns.BlurPool(channels=C, stride=stride)]
+    conv_layer_2 = [nn.Conv2d(in_channels=C, out_channels=two_divided_by_C, kernel_size=3, padding=1, stride=1)]
+    conv_layer_3 = [nn.Conv2d(in_channels=two_divided_by_C, out_channels=two_divided_by_C, kernel_size=3, padding=1, stride=1)]
+
+    if init_zero_weights:
+        # for the torch.randn initialization: torch.randn(out_channels, in_channels, kernel_size, kernel_size)
+        conv_layer_2[0].weight.data = 0.001 * torch.randn(two_divided_by_C, C, 3, 3)
+        conv_layer_3[0].weight.data = 0.001 * torch.randn(two_divided_by_C, two_divided_by_C, 3, 3)
+    
+    if activ == "leaky":
+        conv_layer_2.append(nn.LeakyReLU())
+        conv_layer_3.append(nn.LeakyReLU())
+    
+    # in case we wanted to experiment
+    elif activ == 'relu':
+        conv_layer_2.append(nn.ReLU())
+        conv_layer_3.append(nn.ReLU())
+
+    layers += blurupsample_layer_1 + conv_layer_2 + conv_layer_3
+
+    return nn.Sequential(*layers)
+
+def disney_downlayer(in_channels, out_channels, kernel_size=4, stride=2, 
+                     padding=1, init_zero_weights=False, activ="leaky"):
+    
+    # Using this terminology because that's how it was in the disney paper... want to be consistent
+    C = in_channels
+    two_times_C = 2 * out_channels
+
+
+    layers = []
+    # MaxBlurPool as described in the following github: https://github.com/adobe/antialiased-cnns/blob/master/README.md
+    # The true downsampling is said to be done in the blur pool layer and NOT the maxpool, so setting the stride in the maxpool layer to 1
+    # to avoid too much downsampling
+    maxblurpool_layer_1 = [nn.MaxPool2d(kernel_size=kernel_size, stride=1, padding=padding), antialiased_cnns.BlurPool(channels=C, stride=stride)]
+    conv_layer_2 = [nn.Conv2d(in_channels=C, out_channels=two_times_C, kernel_size=4, padding=1, stride=2)]
+    conv_layer_3 = [nn.Conv2d(in_channels=two_times_C, out_channels=two_times_C, kernel_size=3, padding=1, stride=1)]
+    conv_layer_4 = [nn.Conv2d(in_channels=two_times_C, out_channels=two_times_C, kernel_size=3, padding=1, stride=1)]
+
+    if init_zero_weights:
+        # for the torch.randn initialization: torch.randn(out_channels, in_channels, kernel_size, kernel_size)
+        conv_layer_2[0].weight.data = 0.001 * torch.randn(two_times_C, C, 4, 4)
+        conv_layer_3[0].weight.data = 0.001 * torch.randn(two_times_C, two_times_C, 3, 3)
+        conv_layer_4[0].weight.data = 0.001 * torch.randn(two_times_C, two_times_C, 3, 3)
+    
+    if activ == "leaky":
+        conv_layer_2.append(nn.LeakyReLU())
+        conv_layer_3.append(nn.LeakyReLU())
+        conv_layer_4.append(nn.LeakyReLU())
+    
+    # in case we wanted to experiment
+    elif activ == 'relu':
+        conv_layer_2.append(nn.ReLU())
+        conv_layer_3.append(nn.ReLU())
+        conv_layer_4.append(nn.ReLU())
+
+    layers += maxblurpool_layer_1 + conv_layer_2 + conv_layer_3 + conv_layer_4
+
+    return nn.Sequential(*layers)
 
 
 def conv(in_channels, out_channels, kernel_size, stride=2, padding=1,
@@ -96,6 +168,35 @@ class ConditionalBatchNorm(torch.nn.Module):
     def extra_repr(self):
         return '{num_features}, num_cats={num_cats}, eps={eps}, momentum={momentum}, affine={affine}, ' \
                'track_running_stats={track_running_stats}'.format(**self.__dict__)
+
+
+# Trying out a new generator
+class DisneyGenerator(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+        self.conv1 = conv(in_channels=3, out_channels=64, kernel_size=3, padding=1, stride=1, norm=None, activ="leaky")
+        # ------------
+        self.conv2 = conv(in_channels=64, out_channels=64, kernel_size=3, padding=1, stride=1, norm=None, activ="leaky")
+        # ------------
+        self.downlayer3 = disney_downlayer(in_channels=64, out_channels=128, kernel_size=4, stride=2, padding=1, activ="leaky")
+        self.downlayer4 = disney_downlayer(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=1, activ="leaky")
+        self.downlayer5 = disney_downlayer(in_channels=256, out_channels=512, kernel_size=4, stride=2, padding=1, activ="leaky")
+        self.downlayer6 = disney_downlayer(in_channels=512, out_channels=1024, kernel_size=4, stride=2, padding=1, activ="leaky")
+        # ------------
+        self.uplayer7 = disney_uplayer(in_channels=1024, out_channels=512, activ="leaky")
+        self.uplayer8 = disney_uplayer(in_channels=512, out_channels=256, activ="leaky")
+        self.uplayer9 = disney_uplayer(in_channels=256, out_channels=128, activ="leaky")
+        self.uplayer10 = disney_uplayer(in_channels=128, out_channels=64, activ="leaky")
+        # ------------
+        self.conv2 = conv(in_channels=64, out_channels=3, )# TODO: find the proper dimensions for the kernel size, padding, and stride..... kernel_size=3, padding=1, stride=1, norm=None, activ="leaky")
+        
+
+    def forward(self, z):
+        # TODO: Implement the forward pass
+        pass
+
+        return z
 
 
 class Generator(nn.Module):
