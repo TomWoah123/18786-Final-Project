@@ -117,9 +117,9 @@ class Discriminator(nn.Module):
                                norm=norm, init_zero_weights=False, activ='leaky')
         self.conv4 = self.conv(in_channels=(conv_dim * 2), out_channels=(conv_dim * 4), kernel_size=4, stride=2,
                                padding=1, norm=norm, init_zero_weights=False, activ='leaky')
-        self.conv5 = self.conv(in_channels=(conv_dim * 4), out_channels=1, kernel_size=4, stride=2, padding=0,
+        self.conv5 = self.conv(in_channels=(conv_dim * 4), out_channels=1, kernel_size=4, stride=2, padding=1,
                                norm=None, init_zero_weights=False, activ=None)
-        self.fc = nn.Linear(225, 1)
+        self.fc = nn.Linear(256, 1)
 
     def forward(self, x):
         sigmoid = nn.Sigmoid()
@@ -134,3 +134,7 @@ class Discriminator(nn.Module):
         x = sigmoid(x)
         return x.squeeze()
 
+
+input_image = torch.randn(size=(16, 4, 512, 512))
+discriminator = Discriminator()
+result = discriminator(input_image)

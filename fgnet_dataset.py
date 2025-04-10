@@ -3,6 +3,7 @@ import PIL.Image as Image
 from torch.utils.data import DataLoader, Dataset, random_split
 import torch
 from torchvision import transforms
+from torchvision.utils import save_image
 
 
 class FGNetDataset(Dataset):
