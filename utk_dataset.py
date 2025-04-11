@@ -2,10 +2,12 @@ import os
 import PIL.Image as Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
+import random
 
 
 class UTKDataset(Dataset):
-    def __init__(self, age_group, directory="utk_dataset"):
+    def __init__(self, age_group, directory="utk_dataset", num_samples=5200):
+        random.seed(42)
         age_dictionary = {"0-9": [], "10-19": [], "20-29": [], "30-39": [], "40-49": [], "50-69": [], "70+": []}
         assert age_group in age_dictionary
         for direc in os.listdir(directory):
@@ -26,7 +28,7 @@ class UTKDataset(Dataset):
                     age_dictionary["10-19"].append(os.path.join(direc_path, file))
                 else:
                     age_dictionary["0-9"].append(os.path.join(direc_path, file))
-        self.data_points = age_dictionary[age_group]
+        self.data_points = random.sample(age_dictionary[age_group], num_samples)
 
     def __len__(self):
         return len(self.data_points)
@@ -38,7 +40,8 @@ class UTKDataset(Dataset):
             transforms.Resize((128, 128), Image.BICUBIC),
             transforms.CenterCrop((128, 128)),
             transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
+            transforms.RandomHorizontalFlip()
         ])
         image_tensor = transform(image)
         return image_tensor

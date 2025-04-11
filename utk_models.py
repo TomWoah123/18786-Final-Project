@@ -86,7 +86,7 @@ class Generator(nn.Module):
 
 class Discriminator(nn.Module):
 
-    def __init__(self, conv_dim=64, norm="batch"):
+    def __init__(self, conv_dim=64, norm="batch", sigmoid=False):
         super().__init__()
         self.conv1 = conv(in_channels=3, out_channels=(conv_dim // 2), kernel_size=4, stride=2, padding=1, norm=norm,
                           init_zero_weights=False, activ='leaky')
@@ -101,6 +101,7 @@ class Discriminator(nn.Module):
         self.conv6 = conv(in_channels=(conv_dim * 8), out_channels=1, kernel_size=4, stride=2, padding=0, norm=None,
                           init_zero_weights=False, activ=None)
         self.sigmoid = nn.Sigmoid()
+        self.apply_sigmoid = sigmoid
 
     def forward(self, x):
         x = self.conv1(x)
@@ -109,5 +110,6 @@ class Discriminator(nn.Module):
         x = self.conv4(x)
         x = self.conv5(x)
         x = self.conv6(x)
-        x = self.sigmoid(x)
+        if self.apply_sigmoid:
+            x = self.sigmoid(x)
         return x.squeeze()

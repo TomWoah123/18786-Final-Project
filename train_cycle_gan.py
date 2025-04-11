@@ -7,21 +7,23 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.utils import save_image
 import os
+import math
+import random
 
+random.seed(42)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 face_encoder = InceptionResnetV1(pretrained="vggface2").to(device).eval()
 
 if not os.path.exists("images"):
     os.mkdir("images")
 
-if not os.path.exists("models"):
-    os.mkdir("models")
+if not os.path.exists("models_improv"):
+    os.mkdir("models_improv")
 
 
 def add_noise(image_encodings):
     num_samples = image_encodings.shape[0]
-    noise_vectors = torch.randn((num_samples, 128))
+    noise_vectors = torch.randn((num_samples, 128), device=device)
     augmented_noise = torch.cat([image_encodings, noise_vectors], dim=1).unsqueeze(2).unsqueeze(3)
     return augmented_noise
 
@@ -29,30 +31,29 @@ def add_noise(image_encodings):
 batch_size = 16
 young_faces_dataloader = get_data_loaders(age_group="20-29", batch_size=batch_size)
 old_faces_dataloader = get_data_loaders(age_group="50-69", batch_size=batch_size)
+# Add sigmoid=True to discriminators for BCE Loss
 discriminator_young = Discriminator().to(device)
-# discriminator_young.load_state_dict(torch.load("models/d_young_320.pth"))
+discriminator_young.load_state_dict(torch.load("models_improv/d_young.pth"))
 discriminator_old = Discriminator().to(device)
-# discriminator_old.load_state_dict(torch.load("models/d_old_320.pth"))
+discriminator_old.load_state_dict(torch.load("models_improv/d_old.pth"))
 generator_young_to_old = Generator(noise_size=640).to(device)
-# generator_young_to_old.load_state_dict(torch.load("models/g_yto_320.pth"))
+generator_young_to_old.load_state_dict(torch.load("models_improv/g_yto.pth"))
 generator_old_to_young = Generator(noise_size=640).to(device)
-# generator_old_to_young.load_state_dict(torch.load("models/g_oty_320.pth"))
+generator_old_to_young.load_state_dict(torch.load("models_improv/g_oty.pth"))
 
 discriminator_young_optimizer = torch.optim.Adam(discriminator_young.parameters(), lr=2e-4, betas=(0.5, 0.999))
 discriminator_old_optimizer = torch.optim.Adam(discriminator_old.parameters(), lr=2e-4, betas=(0.5, 0.999))
 generator_yto_optimizer = torch.optim.Adam(generator_young_to_old.parameters(), lr=2e-4, betas=(0.5, 0.999))
 generator_oty_optimizer = torch.optim.Adam(generator_old_to_young.parameters(), lr=2e-4, betas=(0.5, 0.999))
 
-adversarial_loss = nn.BCELoss()
+adversarial_loss = nn.MSELoss()  # Change this to BCE Loss for normal
 cycle_loss = nn.L1Loss()
 identity_preservation_loss = nn.L1Loss()
 num_epochs = 50
-total_train_iters = num_epochs * 326
+total_train_iters = num_epochs * math.ceil(5200 / batch_size)
 iteration = 1
-real_label = 1.0
-fake_label = 0.0
-n_discriminator_iters = 5
-clip_value = 0.01
+real_label = 0.9  # Change this to 1 to remove label smoothing
+fake_label = 0.1  # Change this to 0 to remove label smoothing
 for epoch in range(num_epochs):
     print(f"Epoch: {epoch}")
     for young_images, old_images in zip(young_faces_dataloader, old_faces_dataloader):
@@ -62,7 +63,7 @@ for epoch in range(num_epochs):
         old_image_encodings = add_noise(face_encoder(old_images))
 
         # Optimizing generator young to old
-        real_labels = torch.full(size=(len(young_images),), fill_value=real_label, device=device)
+        real_labels = torch.full(size=(len(young_images),), fill_value=1.0, device=device)
         generated_old_images = generator_young_to_old(young_image_encodings)
         p_old_generated = discriminator_old(generated_old_images)
         g_old_adv = adversarial_loss(p_old_generated, real_labels)
@@ -71,7 +72,7 @@ for epoch in range(num_epochs):
         young_cycle_loss = cycle_loss(reconstructed_young_images, young_images)
 
         # Optimizing generator old to young
-        real_labels = torch.full(size=(len(old_images),), fill_value=real_label, device=device)
+        real_labels = torch.full(size=(len(old_images),), fill_value=1.0, device=device)
         generated_young_images = generator_old_to_young(old_image_encodings)
         p_young_generated = discriminator_young(generated_young_images)
         g_young_adv = adversarial_loss(p_young_generated, real_labels)
@@ -122,7 +123,7 @@ for epoch in range(num_epochs):
                 d_old_loss.item(), g_oty_loss.item(), g_yto_loss.item()
             ))
 
-        if iteration % 20 == 0:
+        if iteration % 200 == 0:
             zanette_image = Image.open("zanette.png").convert("RGB")
             savvides_image = Image.open("savvides.png").convert("RGB")
             transform = transforms.Compose([
@@ -141,9 +142,9 @@ for epoch in range(num_epochs):
             young_savvides = (young_savvides[0] + 1) / 2
             save_image(old_zanette, f"images/old_zanette_{iteration}.png")
             save_image(young_savvides, f"images/young_savvides_{iteration}.png")
-            torch.save(discriminator_old.state_dict(), f"models/d_old.pth")
-            torch.save(discriminator_young.state_dict(), f"models/d_young.pth")
-            torch.save(generator_old_to_young.state_dict(), f"models/g_oty.pth")
-            torch.save(generator_young_to_old.state_dict(), f"models/g_yto.pth")
+            torch.save(discriminator_old.state_dict(), f"models_improv/d_old.pth")
+            torch.save(discriminator_young.state_dict(), f"models_improv/d_young.pth")
+            torch.save(generator_old_to_young.state_dict(), f"models_improv/g_oty.pth")
+            torch.save(generator_young_to_old.state_dict(), f"models_improv/g_yto.pth")
 
         iteration += 1
