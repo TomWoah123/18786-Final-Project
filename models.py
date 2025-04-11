@@ -2,18 +2,32 @@ import torch
 from torch import nn
 import antialiased_cnns
 
-def disney_uplayer(in_channels, out_channels, stride=1, 
+
+##########################
+# Disney Implementations
+##########################
+
+def disney_uplayer(in_channels, out_channels, upsample_mode="nearest", 
                     init_zero_weights=False, activ="leaky"):
     
     # Using this terminology because that's how it was in the disney paper... want to be consistent
     C = in_channels
-    two_divided_by_C = out_channels // 2
+    two_divided_by_C = in_channels // 2
+
+    assert two_divided_by_C == out_channels, "ERROR: In the Generator uplayer, the nuuber of output channels is not half of the number of iput channels (output_channels != input_channels/2)"
 
 
     layers = []
-    # MaxBlurPool as described in the following github: https://github.com/adobe/antialiased-cnns/blob/master/README.md
-    # CHECK THIS BLURUPSAMPLE IMPLEMENTATION
-    blurupsample_layer_1 = [nn.Upsample(scale_factor=2), antialiased_cnns.BlurPool(channels=C, stride=stride)]
+
+    # BlurUpSample
+    blurupsample_layer_1 = None
+    if upsample_mode == "nearest":
+        blurupsample_layer_1 = [nn.Upsample(scale_factor=2, mode='nearest'), antialiased_cnns.BlurPool(channels=C, stride=1)] # Setting the stride to 1 so there isn't any down sampling
+
+    elif upsample_mode == "bilinear": 
+        # bilinear upsampling is said to be better for image generation tasks
+        blurupsample_layer_1 = [nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True), antialiased_cnns.BlurPool(channels=C, stride=1)] # Setting the stride to 1 so there isn't any down sampling
+    
     conv_layer_2 = [nn.Conv2d(in_channels=C, out_channels=two_divided_by_C, kernel_size=3, padding=1, stride=1)]
     conv_layer_3 = [nn.Conv2d(in_channels=two_divided_by_C, out_channels=two_divided_by_C, kernel_size=3, padding=1, stride=1)]
 
@@ -40,7 +54,9 @@ def disney_downlayer(in_channels, out_channels, kernel_size=4, stride=2,
     
     # Using this terminology because that's how it was in the disney paper... want to be consistent
     C = in_channels
-    two_times_C = 2 * out_channels
+    two_times_C = 2 * in_channels
+
+    assert two_times_C == out_channels, "ERROR: In the Generator downlayer, the number of output channels is not double the number of input channels (output_channels != input_channels * 2)"
 
 
     layers = []
@@ -48,35 +64,31 @@ def disney_downlayer(in_channels, out_channels, kernel_size=4, stride=2,
     # The true downsampling is said to be done in the blur pool layer and NOT the maxpool, so setting the stride in the maxpool layer to 1
     # to avoid too much downsampling
     maxblurpool_layer_1 = [nn.MaxPool2d(kernel_size=kernel_size, stride=1, padding=padding), antialiased_cnns.BlurPool(channels=C, stride=stride)]
-    conv_layer_2 = [nn.Conv2d(in_channels=C, out_channels=two_times_C, kernel_size=4, padding=1, stride=2)]
+    conv_layer_2 = [nn.Conv2d(in_channels=C, out_channels=two_times_C, kernel_size=3, padding=1, stride=1)]
     conv_layer_3 = [nn.Conv2d(in_channels=two_times_C, out_channels=two_times_C, kernel_size=3, padding=1, stride=1)]
-    conv_layer_4 = [nn.Conv2d(in_channels=two_times_C, out_channels=two_times_C, kernel_size=3, padding=1, stride=1)]
 
     if init_zero_weights:
         # for the torch.randn initialization: torch.randn(out_channels, in_channels, kernel_size, kernel_size)
-        conv_layer_2[0].weight.data = 0.001 * torch.randn(two_times_C, C, 4, 4)
+        conv_layer_2[0].weight.data = 0.001 * torch.randn(two_times_C, C, 3, 3)
         conv_layer_3[0].weight.data = 0.001 * torch.randn(two_times_C, two_times_C, 3, 3)
-        conv_layer_4[0].weight.data = 0.001 * torch.randn(two_times_C, two_times_C, 3, 3)
     
     if activ == "leaky":
         conv_layer_2.append(nn.LeakyReLU())
         conv_layer_3.append(nn.LeakyReLU())
-        conv_layer_4.append(nn.LeakyReLU())
     
     # in case we wanted to experiment
     elif activ == 'relu':
         conv_layer_2.append(nn.ReLU())
         conv_layer_3.append(nn.ReLU())
-        conv_layer_4.append(nn.ReLU())
 
-    layers += maxblurpool_layer_1 + conv_layer_2 + conv_layer_3 + conv_layer_4
+    layers += maxblurpool_layer_1 + conv_layer_2 + conv_layer_3 
 
     return nn.Sequential(*layers)
 
 
 def conv(in_channels, out_channels, kernel_size, stride=2, padding=1,
          norm='batch', init_zero_weights=False, activ=None):
-    """Create a convolutional layer, with optional normalization."""
+    """Create a normal convolutional layer, with optional normalization."""
     layers = []
     conv_layer = nn.Conv2d(
         in_channels=in_channels, out_channels=out_channels,
@@ -102,6 +114,34 @@ def conv(in_channels, out_channels, kernel_size, stride=2, padding=1,
         layers.append(nn.Tanh())
     return nn.Sequential(*layers)
 
+def patch_gan_conv(in_channels, out_channels, kernel_size, stride=2, padding=1,
+         norm='batch', init_zero_weights=False, activ=None):
+    """Create a PatchGAN convolutional layer, with optional normalization."""
+    layers = []
+    conv_layer = nn.Conv2d(
+        in_channels=in_channels, out_channels=out_channels,
+        kernel_size=kernel_size, stride=stride, padding=padding,
+        bias=norm is None
+    )
+    if init_zero_weights:
+        conv_layer.weight.data = 0.001 * torch.randn(
+            out_channels, in_channels, kernel_size, kernel_size
+        )
+    layers.append(conv_layer)
+
+    if norm == 'batch':
+        layers.append(nn.BatchNorm2d(out_channels))
+    elif norm == 'instance':
+        layers.append(nn.InstanceNorm2d(out_channels))
+
+    if activ == 'relu':
+        layers.append(nn.ReLU())
+    elif activ == 'leaky':
+        # Typical PatchGANs use negative_slope of 0.2
+        layers.append(nn.LeakyReLU(0.2))
+
+    return nn.Sequential(*layers)
+
 
 class ConditionalBatchNorm(nn.Module):
     def __init__(self, num_features, num_conditions):
@@ -125,7 +165,7 @@ class DisneyGenerator(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.conv1 = conv(in_channels=3, out_channels=64, kernel_size=3, padding=1, stride=1, norm=None, activ="leaky")
+        self.conv1 = conv(in_channels=5, out_channels=64, kernel_size=3, padding=1, stride=1, norm=None, activ="leaky")
         # ------------
         self.conv2 = conv(in_channels=64, out_channels=64, kernel_size=3, padding=1, stride=1, norm=None, activ="leaky")
         # ------------
@@ -139,16 +179,44 @@ class DisneyGenerator(nn.Module):
         self.uplayer9 = disney_uplayer(in_channels=256, out_channels=128, activ="leaky")
         self.uplayer10 = disney_uplayer(in_channels=128, out_channels=64, activ="leaky")
         # ------------
-        self.conv2 = conv(in_channels=64, out_channels=3, )# TODO: find the proper dimensions for the kernel size, padding, and stride..... kernel_size=3, padding=1, stride=1, norm=None, activ="leaky")
+        self.conv11 = conv(in_channels=64, out_channels=3, kernel_size=3, padding=1, stride=1, norm=None, activ=None)
         
 
     def forward(self, z):
-        # TODO: Implement the forward pass
-        pass
+        x = self.conv1(z)
+        x = self.conv2(x)
+        x = self.downlayer3(x)
+        x = self.downlayer4(x)
+        x = self.downlayer5(x)
+        x = self.downlayer6(x)
+        x = self.uplayer7(x)
+        x = self.uplayer8(x)
+        x = self.uplayer9(x)
+        x = self.uplayer10(x)
+        x = self.conv11(x)
 
-        return z
+        return x
+    
+# PatchGAN adapted from https://github.com/znxlwm/pytorch-pix2pix/blob/3059f2af53324e77089bbcfc31279f01a38c40b8/network.py#L104
+class DiscriminatorPatchGAN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv1 = patch_gan_conv(in_channels=8, out_channels=64, kernel_size=4, padding=1, stride=2, norm="batch", activ="leaky")
+        self.conv2 = patch_gan_conv(in_channels=64, out_channels=128, kernel_size=4, padding=1, stride=2, norm="batch", activ="leaky")
+        self.conv3 = patch_gan_conv(in_channels=128, out_channels=256, kernel_size=4, padding=1, stride=2, norm="batch", activ=None) # using BCEWithLogitsLoss... so do not need sigmoid as the final activation
+
+    # forward method
+    def forward(self, input, label):
+        x = torch.cat([input, label], 1)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        return x
 
 
+##########################
+# Other Implementations
+##########################
 class Generator(nn.Module):
     class Encoder(nn.Module):
         def __init__(self, conv_dim=64):
