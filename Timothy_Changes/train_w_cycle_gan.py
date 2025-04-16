@@ -9,6 +9,8 @@ from torchvision.utils import save_image
 import os
 import math
 import random
+import matplotlib.pyplot as plt
+import time 
 
 random.seed(42)
 
@@ -60,17 +62,17 @@ for model_file, file_exists in have_saved_model.items():
         elif model_file == "models_improv/wcgan_g_oty.pth":
             generator_old_to_young.load_state_dict(torch.load(model_file))
 
-discriminator_young_optimizer = torch.optim.Adam(discriminator_young.parameters(), lr=2e-4, betas=(0.5, 0.999))
-discriminator_old_optimizer = torch.optim.Adam(discriminator_old.parameters(), lr=2e-4, betas=(0.5, 0.999))
-generator_yto_optimizer = torch.optim.Adam(generator_young_to_old.parameters(), lr=2e-4, betas=(0.5, 0.999))
-generator_oty_optimizer = torch.optim.Adam(generator_old_to_young.parameters(), lr=2e-4, betas=(0.5, 0.999))
+discriminator_young_optimizer = torch.optim.RMSprop(discriminator_young.parameters(), lr=2e-4)
+discriminator_old_optimizer = torch.optim.RMSprop(discriminator_old.parameters(), lr=2e-4)
+generator_yto_optimizer = torch.optim.RMSprop(generator_young_to_old.parameters(), lr=2e-4)
+generator_oty_optimizer = torch.optim.RMSprop(generator_old_to_young.parameters(), lr=2e-4)
 
 def wasserstein_loss(prob_fake_image=None, prob_real_image=None, type=None): 
     if type == "Generator":
         g_loss = -torch.mean(prob_fake_image) # Want to minimize the probability of the fake image is fake
         return g_loss
     elif type == "Discriminator":
-        d_loss = -torch.mean(prob_real_image + prob_real_image)
+        d_loss = -torch.mean(prob_real_image + prob_fake_image)
         return d_loss
 
 
@@ -82,6 +84,10 @@ total_train_iters = num_epochs * math.ceil(5200 / batch_size)
 iteration = 1
 real_label = 0.9  # Change this to 1 to remove label smoothing
 fake_label = 0.1  # Change this to 0 to remove label smoothing
+
+all_young_cycle_losses = []
+all_old_cycle_losses = []
+
 for epoch in range(num_epochs):
     print(f"Epoch: {epoch}")
     # Reinitializing the dataloader so it doesn't get exhausted
@@ -99,6 +105,7 @@ for epoch in range(num_epochs):
         old_identity_loss = identity_preservation_loss(face_encoder(young_images), face_encoder(generated_old_images))
         reconstructed_young_images = generator_old_to_young(add_noise(face_encoder(generated_old_images)))
         young_cycle_loss = cycle_loss(reconstructed_young_images, young_images)
+        all_young_cycle_losses.append(young_cycle_loss.item())
 
         # Optimizing generator old to young
         generated_young_images = generator_old_to_young(old_image_encodings)
@@ -107,6 +114,7 @@ for epoch in range(num_epochs):
         young_identity_loss = identity_preservation_loss(face_encoder(old_images), face_encoder(generated_young_images))
         reconstructed_old_images = generator_young_to_old(add_noise(face_encoder(generated_young_images)))
         old_cycle_loss = cycle_loss(reconstructed_old_images, old_images)
+        all_old_cycle_losses.append(old_cycle_loss.item())
 
         # Creating loss functions and optimizing
         generator_yto_optimizer.zero_grad()
@@ -123,24 +131,34 @@ for epoch in range(num_epochs):
         p_young_real = discriminator_young(young_images)
         fake_young_images = generator_old_to_young(old_image_encodings)
         p_young_fake = discriminator_young(fake_young_images)
-        d_young_loss_wasserstein = wasserstein_loss(prob_fake_image=fake_young_images, prob_real_image=p_young_real, type="Discriminator")
+        d_young_loss_wasserstein = wasserstein_loss(prob_fake_image=p_young_fake, prob_real_image=p_young_real, type="Discriminator")
         d_young_loss_wasserstein.backward(retain_graph=True)
         discriminator_young_optimizer.step()
+
+        # Doing the clipping for the params of the young discriminator
+        for p in discriminator_young.parameters():
+             p.data.clamp_(-0.01, 0.01)  # clips weights to [-c, c] (enforces 1-Lipschitz continuity.. but not well according to the paper)
 
         # Optimizing discriminator old
         discriminator_old_optimizer.zero_grad()
         p_old_real = discriminator_old(old_images)
         fake_old_images = generator_young_to_old(young_image_encodings)
         p_old_fake = discriminator_old(fake_old_images)
-        d_old_loss_wasserstein = wasserstein_loss(prob_fake_image=fake_old_images, prob_real_image=p_old_real, type="Discriminator")
+        d_old_loss_wasserstein = wasserstein_loss(prob_fake_image=p_old_fake, prob_real_image=p_old_real, type="Discriminator")
         d_old_loss_wasserstein.backward()
         discriminator_old_optimizer.step()
 
+        # Doing the clipping for the params of the old discriminator
+        for p in discriminator_old.parameters():
+             p.data.clamp_(-0.01, 0.01)  # clips weights to [-c, c] (enforces 1-Lipschitz continuity.. but not well according to the paper)
+
         if iteration % 10 == 0:
             print('Iteration [{:4d}/{:4d}] | D_young_loss: {:6.4f} | '
-                  'D_old_loss: {:6.4f} | G_oty_loss: {:6.4f} | G_yto_loss: {:6.4f}'.format(
+                  'D_old_loss: {:6.4f} | G_oty_loss: {:6.4f} | G_yto_loss: {:6.4f} | '
+                  'Old C Loss: {:6.4f} | Young C Loss: {:6.4f}'.format(
                 iteration, total_train_iters, d_young_loss_wasserstein.item(),
-                d_old_loss_wasserstein.item(), g_oty_loss.item(), g_yto_loss.item()
+                d_old_loss_wasserstein.item(), g_oty_loss.item(), g_yto_loss.item(),
+                old_cycle_loss.item(), young_cycle_loss.item()
             ))
 
         if iteration % 200 == 0:
@@ -166,5 +184,14 @@ for epoch in range(num_epochs):
             torch.save(discriminator_young.state_dict(), f"models_improv/wcgan_d_young.pth")
             torch.save(generator_old_to_young.state_dict(), f"models_improv/wcgan_g_oty.pth")
             torch.save(generator_young_to_old.state_dict(), f"models_improv/wcgan_g_yto.pth")
+
+             # Intermediate plot of the cycle losses
+            plt.plot(all_young_cycle_losses, label="Young Cycle losses")
+            plt.plot(all_old_cycle_losses, label="Old Cycle losses")
+            plt.xlabel("Iteration")
+            plt.ylabel("Cycle Loss")
+            plt.legend()
+            plt.savefig("cycle_losses_plot.png", dpi=300)
+            plt.close()
 
         iteration += 1

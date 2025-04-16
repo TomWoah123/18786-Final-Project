@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 from facenet_pytorch import InceptionResnetV1
-from Timothy_Changes.create_utk_dataset import get_data_loaders, get_both_data_loaders
+from create_utk_dataset import get_data_loaders, get_both_data_loaders
 from utk_models import Discriminator, Generator
 from PIL import Image
 from torchvision import transforms
@@ -9,17 +9,25 @@ from torchvision.utils import save_image
 import os
 import math
 import random
+import matplotlib.pyplot as plt
 
 random.seed(42)
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+elif torch.torch.backends.mps.is_available():
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+print(f"------------ STARTING TRAINING: (using device: {device}) ------------")
 face_encoder = InceptionResnetV1(pretrained="vggface2").to(device).eval()
+
 
 if not os.path.exists("images"):
     os.mkdir("images")
 
 if not os.path.exists("models_improv"):
     os.mkdir("models_improv")
-
 
 def add_noise(image_encodings):
     num_samples = image_encodings.shape[0]
@@ -29,20 +37,29 @@ def add_noise(image_encodings):
 
 
 batch_size = 8
-# young_faces_dataloader = get_data_loaders(age_group="20-29", batch_size=batch_size)
-# old_faces_dataloader = get_data_loaders(age_group="50-69", batch_size=batch_size)
-
-both_ages_dataloader = get_both_data_loaders(young_age_group="20-29", old_age_group="50-69", batch_size=batch_size)
 
 # Add sigmoid=True to discriminators for BCE Loss
 discriminator_young = Discriminator().to(device)
-# discriminator_young.load_state_dict(torch.load("models_improv/d_young.pth"))
 discriminator_old = Discriminator().to(device)
-# discriminator_old.load_state_dict(torch.load("models_improv/d_old.pth"))
 generator_young_to_old = Generator(noise_size=640).to(device)
-# generator_young_to_old.load_state_dict(torch.load("models_improv/g_yto.pth"))
 generator_old_to_young = Generator(noise_size=640).to(device)
-# generator_old_to_young.load_state_dict(torch.load("models_improv/g_oty.pth"))
+
+# Checking if there are saved models for each generator/discriminator
+have_saved_model = {"models_improv/d_young.pth": False, "models_improv/d_old.pth": False, \
+                    "models_improv/g_yto.pth": False, "models_improv/g_oty.pth": False}
+# Loading in the correct saved model if it exists
+for model_file, file_exists in have_saved_model.items():
+    if os.path.exists(model_file):
+        print(f"Found a saved model; relative path = {model_file}")
+        have_saved_model[model_file] = True
+        if model_file == "models_improv/d_young.pth":
+            discriminator_young.load_state_dict(torch.load(model_file))
+        elif model_file == "models_improv/d_old.pth":
+            discriminator_old.load_state_dict(torch.load(model_file))
+        elif model_file == "models_improv/g_yto.pth":
+            generator_young_to_old.load_state_dict(torch.load(model_file))
+        elif model_file == "models_improv/g_oty.pth":
+            generator_old_to_young.load_state_dict(torch.load(model_file))
 
 discriminator_young_optimizer = torch.optim.Adam(discriminator_young.parameters(), lr=2e-4, betas=(0.5, 0.999))
 discriminator_old_optimizer = torch.optim.Adam(discriminator_old.parameters(), lr=2e-4, betas=(0.5, 0.999))
@@ -59,6 +76,8 @@ real_label = 0.9  # Change this to 1 to remove label smoothing
 fake_label = 0.1  # Change this to 0 to remove label smoothing
 for epoch in range(num_epochs):
     print(f"Epoch: {epoch}")
+    # Reinitializing the dataloader so it doesn't get exhausted
+    both_ages_dataloader = get_both_data_loaders(young_age_group="20-29", old_age_group="50-69", batch_size=batch_size)
     for young_images, old_images in both_ages_dataloader:
         young_images = young_images.to(device)
         old_images = old_images.to(device)
@@ -67,8 +86,8 @@ for epoch in range(num_epochs):
 
         # Optimizing generator young to old
         real_labels = torch.full(size=(len(young_images),), fill_value=1.0, device=device)
-        generated_old_images = generator_young_to_old(young_image_encodings)
-        p_old_generated = discriminator_old(generated_old_images)
+        generated_old_images = generator_young_to_old(young_image_encodings) # image created from sampled noise
+        p_old_generated = discriminator_old(generated_old_images) 
         g_old_adv = adversarial_loss(p_old_generated, real_labels)
         old_identity_loss = identity_preservation_loss(face_encoder(young_images), face_encoder(generated_old_images))
         reconstructed_young_images = generator_old_to_young(add_noise(face_encoder(generated_old_images)))

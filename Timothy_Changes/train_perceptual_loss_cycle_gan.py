@@ -72,23 +72,23 @@ adversarial_loss = nn.MSELoss()  # Change this to BCE Loss for normal
 cycle_loss = nn.L1Loss()
 identity_preservation_loss = nn.L1Loss()
 
-# # -- Setting up perceptual loss --
-# # Load pre-trained VGG model
-# vgg_model = models.vgg16(pretrained=True).features
-# vgg_model.eval() 
-# vgg_model.to(device)
-# normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-# def extract_image_features(image, model):
-#     image = normalize(image)
-#     # Pass through VGG layers to extract features
-#     features = model(image)
-#     return features
+# -- Setting up perceptual loss --
+# Load pre-trained VGG model
+vgg_model = models.vgg16(pretrained=True).features
+vgg_model.eval() 
+vgg_model.to(device)
+normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+def extract_image_features(image, model):
+    image = normalize(image)
+    # Pass through VGG layers to extract features
+    features = model(image)
+    return features
 
-# def perceptual_loss(real_image, fake_image, model):
-#     real_features = extract_image_features(real_image, model)
-#     gen_features = extract_image_features(fake_image, model)
-#     loss = F.mse_loss(real_features, gen_features)
-#     return loss
+def perceptual_loss(real_image, fake_image, model):
+    real_features = extract_image_features(real_image, model)
+    gen_features = extract_image_features(fake_image, model)
+    loss = F.mse_loss(real_features, gen_features)
+    return loss
 
 
 num_epochs = 50
