@@ -4,7 +4,7 @@
 </div>
 <div align="center">
 <b>Timothy Wu</b><sup>1*</sup>,
-<b>Penny Sarac</b><sup>1*</sup>,
+<b>Pelinsu Sarac</b><sup>1*</sup>,
 <b>Briana Abam</b><sup>1*</sup>
 <br>
 </div>
