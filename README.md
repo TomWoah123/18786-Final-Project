@@ -33,7 +33,7 @@ Next, you will need to download the UTK dataset which can be found using this li
 pip install -r requirements.txt
 ```
 
-## Python Files
+## Structural Overview
 A preview of the project structure can be found below.
 ```
 .
@@ -48,4 +48,9 @@ A preview of the project structure can be found below.
 ├── utk_models.py
 └── utk_dataset.py
 ```
+A description of each python file can be found below:
+- `streamlit_runner_page.py`: This python file hosts the front end user interface for how a user can interact with our model.
+- `train_cycle_gan.py`: This python file contains the training script for training the CycleGAN architecture.
+- `utk_dataset.py`: This python file hosts the Dataset and DataLoader classes used to load in the faces of a particular age range in the UTK dataset.
+- `utk_models.py`: This python file contains the architectures for the Deep Convolutional Discriminator (DC-Discriminator) and Deep Convolutional Generator (DC-Generator).
 
