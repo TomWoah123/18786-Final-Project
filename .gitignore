@@ -2,3 +2,4 @@ ffhq-dataset-v2.json
 ffhq_aging_labels.csv
 data/
 __pycache__
+.venv/
