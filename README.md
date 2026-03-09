@@ -54,3 +54,9 @@ A description of each python file can be found below:
 - `utk_dataset.py`: This python file hosts the Dataset and DataLoader classes used to load in the faces of a particular age range in the UTK dataset.
 - `utk_models.py`: This python file contains the architectures for the Deep Convolutional Discriminator (DC-Discriminator) and Deep Convolutional Generator (DC-Generator).
 
+## How to train the model.
+To train the model, run 
+```bash
+$ python train_cycle_gan.py --load_models $DIRECTORY --device $DEVICE --loss $LOSS
+```
+
