@@ -37,16 +37,13 @@ pip install -r requirements.txt
 A preview of the project structure can be found below.
 ```
 .
-├── Calculate_FID_and_KID.ipynb
-├── data_loader.py
+├── Calculate_FID_and_KID.ipynb (Pelinsu)
 ├── requirements.txt
 ├── README.md
-├── savvides.png
-├── streamlit_runner_page.py
-├── train_cycle_gan.py
-├── zanette.png
-├── utk_models.py
-└── utk_dataset.py
+├── streamlit_runner_page.py (Brianna)
+├── train_cycle_gan.py (Timothy)
+├── utk_models.py (Timothy)
+└── utk_dataset.py (Timothy)
 ```
 A description of each python file can be found below:
 - `streamlit_runner_page.py`: This python file hosts the front end user interface for how a user can interact with our model.
