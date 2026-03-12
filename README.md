@@ -57,6 +57,29 @@ A description of each python file can be found below:
 ## How to train the model.
 To train the model, run 
 ```bash
-$ python train_cycle_gan.py --load_models $DIRECTORY --device $DEVICE --loss $LOSS
+$ python train_cycle_gan.py --load_models $LOAD_DIRECTORY --loss $LOSS --batch_size $BATCH_SIZE --num_epochs $NUM_EPOCHS --save_models $SAVE_DIRECTORY --learning_rate $LEARNING_RATE --label_smoothing
 ```
+### Command Line Arguments
+The description for the different arguments can be found below:
+- **`--load_models`** (`str`, default: `None`)  
+  Directory containing model weights to load before training begins.
+
+- **`--save_models`** (`str`, default: `None`)  
+  Directory where trained model weights will be saved.
+
+- **`--batch_size`** (`int`, default: `16`)  
+  Batch size used during training.
+
+- **`--num_epochs`** (`int`, default: `50`)  
+  Number of training epochs for the CycleGAN.
+
+- **`--learning_rate`** (`float`, default: `2e-4`)  
+  Learning rate used for all models.
+
+- **`--loss`** (`str`, default: `"BCE"`)  
+  Loss function used to train the CycleGAN. Options: `BCE` or `MSE`.
+
+- **`--label_smoothing`** (`flag`, default: `False`)  
+  Enable label smoothing when computing the GAN loss.
+
 
